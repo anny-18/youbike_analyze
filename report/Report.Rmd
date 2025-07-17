@@ -1,0 +1,662 @@
+---
+title: "台北市 YouBike 2.0 ## 租借量不平衡站點分析"
+author: "Wu Cheng Yun"
+date: "2025-07-15"
+output: html_document
+---
+```{r setup, include=FALSE}
+library(tidyverse) 
+library(stringdist)
+library(knitr)
+library(kableExtra)
+library(knitr)
+```
+
+本專案旨在分析位於台北市的 YouBike 2.0 各站點的供需情況，探查其使用模式，
+識別供需不平衡的站點。
+並根據不同時間段及調度需求，提出站點間車輛調度的初步策略建議。
+
+主要資料來源為臺北市政府交通局提供的 2024 年 7 月至 12 月「臺北市公共自行車 2.0 租借紀錄」，
+以及「YouBike2.0臺北市公共自行車即時資訊」
+
+--------------------------------------
+### 1. 資料說明
+主要資料來源為臺北市政府交通局提供的 2024 年 7 月至 12 月「[臺北市公共自行車 2.0 租借紀錄](https://data.gov.tw/dataset/150635)」，
+及「[YouBike2.0臺北市公共自行車即時資訊](https://data.gov.tw/dataset/137993)」。
+另外，因資料清理所需，也同樣使用「[新北市公共自行車租賃系統(YouBike2.0)](https://data.ntpc.gov.tw/datasets/010e5b15-3823-4b20-b401-b1cf000550c5)」，「[桃園公共自行車即時服務資料](https://opendata.tycg.gov.tw/datalist/5ca2bfc7-9ace-4719-88ae-4034b9a5a55c)」。  
+  
+#### 資料期間
+2024年7月至12月之台北市Youbike租借紀錄。以及2025年7月之台北市、新北市及桃園市Youbike站點資料。  
+
+#### 資料型態
+```{r data discribe, echo=FALSE}
+# 建立租借紀錄資料框
+df <- tibble(
+  欄位名稱 = c("start_time", "start_station", "end_time", "end_station", "duration", "ride_date"),
+  資料型態 = c("字串", "字串", "字串", "字串", "字串", "日期"),
+  說明 = c("借車時間", "借車站點", "還車時間", "還車站點", "借用時長", "借用日期")
+)
+
+# 使用kable輸出表格，並用kableExtra美化
+kable(df, format = "html", caption = "台北市Youbike租借紀錄") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+# 建立台北市資料框
+df <- tibble(
+  欄位名稱 = c("station_id", "station_name", "district", "address", "latitude", "longitude", "capacity"),
+  資料型態 = c("字串", "字串", "字串", "字串", "數值", "數值", "整數"),
+  說明 = c("站點編號", "站名", "行政區", "地址", "緯度", "經度", "容量")
+)
+
+# 使用kable輸出表格，並用kableExtra美化
+kable(df, format = "html", caption = "台北市站點") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+# 建立新北市資料框
+df <- tibble(
+  欄位名稱 = c("station_id", "station_name", "district", "address", "latitude", "longitude"),
+  資料型態 = c("字串", "字串", "字串", "字串", "數值", "數值"),
+  說明 = c("站點編號", "站名", "行政區", "地址", "緯度", "經度")
+)
+
+# 使用kable輸出表格，並用kableExtra美化
+kable(df, format = "html", caption = "新北市站點") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+
+# 建立桃園市資料框
+df <- tibble(
+  欄位名稱 = c("station_name"),
+  資料型態 = c("字串"),
+  說明 = c("站名")
+)
+# 使用kable輸出表格，並用kableExtra美化
+kable(df, format = "html", caption = "桃園市站點") %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+
+```
+
+
+### 2. 資料取得與整合
+
+#### 
+
+此專題使用3個資料集，分別是:<br>
+- all_data [使用者租借紀錄]<br>
+- station_data：station_data_taipei [台北市站點資料] 及 station_data_newtaipei [新北市站點資料] <br>
+- station_data_taoyuan [桃園市站點資料]<br>
+
+
+
+根據官方的格式及取得方式，分別採取以下方式取得：
+<details>
+<summary><strong>
+<span style="font-size:15px;">all_data
+</strong></summary>
+<br>
+取得方式：下載自官網之CSV檔, 並整合而成。<br>
+<br>
+取得欄位：「借車時間」, 「借車站點」, 「還車時間」, 「還車站點」, 「借用時長」, 「借用日期」<br>
+<br>
+由於6月至10月之資料裡未紀錄車型資料，因此匯入資料時分類進行。<br>
+若無車型資料，直接加入all_data。<br>
+若有車型資料，則先剔除車型資料後再加入all_data中。<br>
+<br>
+其中，由於部分租借紀錄的duration(借用借用時長)超過24小時，因此先以字串方式匯入。爾後，再另外將資料型態轉為時間。
+
+```{r get borrow records, eval = FALSE, echo=TRUE}
+
+#垂直合併資料
+files <- list.files(path = "dataset", pattern = "\\.csv$", full.names = TRUE)
+
+#部分資料集未包含車型,因此將分開處理
+col_names_7 <- c("start_time", "start_station", "end_time", "end_station", "duration", "bike_type", "ride_date")
+col_names_6 <- c("start_time", "start_station", "end_time", "end_station", "duration", "ride_date")
+
+#建立空tibble以儲存資料
+all_data <- tibble()
+
+#將資料存入all_data
+for(f in files[1:6]){
+  
+  #取得欄位數量,判斷此資料集是否包含車型資料
+  first_line <- readLines(f, n=1)
+  column_count <- str_count(first_line, ",")+1
+  
+  #若無車型資料(column_count=6),直接存入data
+  if(column_count==6){  
+    data <- read_csv(f, col_names = col_names_6, col_type = cols(duration=col_character())) 
+    #duration以字串方式匯入,其他自行判斷資料型態
+  }
+  #若有車型資料(column_count=7),則刪除車型資料後, 再存入data
+  else if(column_count==7){ 
+    data <- read_csv(f, col_names = col_names_7, col_type = cols(duration=col_character())) 
+    #duration以字串方式匯入,其他自行判斷資料型態
+    data <- select(data, -bike_type)
+  }
+  else{
+    cat("error:", f, "\n")
+  }
+  #將data寫入all_data
+  all_data <-bind_rows(all_data,data)
+  
+}
+
+```
+</details>
+<details>
+<summary><strong>
+<span style="font-size:15px;">station_data
+</strong></summary>
+取得方式：<br>
+station_data_taipei：以線上JSON檔取得<br>
+station_data_newtaipei：透過API分頁取得JSON格式資料<br>
+<br>
+取得欄位：「站點編號」, 「站名」, 「行政區」, 「地址」, 「緯度」, 「經度」<br>
+<br>
+透過相對應方式取得資料後，將其合併成station_data，供之後用來比對站點名稱是否正確。
+<br>
+並針對所需調整，<br>
+為區別台北市與新北市的站點區域，將行政區前分別加上「台北市」或「新北市」。<br>
+另外，由於站點前皆有前綴文字「YouBike2.0_」，考慮分析效率，將其刪除。<br>
+
+```{r get taipei station, eval=FALSE, echo=TRUE}
+#台北市站點
+station_data_taipei <- fromJSON("https://tcgbusfs.blob.core.windows.net/dotapp/youbike/v2/youbike_immediate.json")
+station_data_taipei <- station_data_taipei %>%
+  select(sno, sna, sarea, ar, latitude, longitude, Quantity) %>%
+  rename(station_id=sno, station_name=sna, district=sarea, address=ar, capacity=Quantity) %>% 
+  mutate(district=paste0("台北市",district))
+
+#新北市站點
+station_data_newtaipei <-{
+  page <-0
+  size <-100
+  data <- list()
+  repeat{
+    url<-paste0("https://data.ntpc.gov.tw/api/datasets/010e5b15-3823-4b20-b401-b1cf000550c5/json?page=", page, "&size=", size)
+    data_page <-fromJSON(url)
+    if(length(data_page) == 0) break
+    data[[page+1]] <- data_page
+    page <- page+1
+  }
+  bind_rows(data)
+  
+}
+#留下所需欄位，並根據需求調整
+station_data_newtaipei <- station_data_newtaipei %>%
+  select(sno, sna, sarea, ar, lat, lng) %>%
+  rename(station_id=sno, station_name=sna, district=sarea, address=ar, latitude=lat, longitude=lng) %>% 
+  mutate(
+    latitude = as.numeric(latitude),
+    longitude = as.numeric(longitude),
+    district=paste0("新北市",district)
+  )
+
+#合併台北市及新北市資料
+station_data <- bind_rows(station_data_taipei, station_data_newtaipei)
+
+#去除station_name前的多餘字串
+station_data <- station_data %>%
+  mutate(station_name = str_remove(station_name, "^YouBike2.0_"))
+```
+</details>
+<details>
+<summary><strong>
+<span style="font-size:15px;">station_data_taoyuan
+</strong></summary>
+取得方式：自官網下載JSON檔後載入<br>
+<br>
+取得欄位：「站名」<br>
+<br>
+部分紀錄還車站點位於桃園，由於僅佔整體資料的0.0009，決定於分析時排除。
+因此僅需站點名稱即可。
+<br>
+
+```{r get taoyuan, eval=FALSE, echo=TRUE}
+#獲取桃園站點的資料
+station_data_taoyuan <- fromJSON("taoyuan_station_json.json")
+station_data_taoyuan <- station_data_taoyuan %>% select(sna) %>% pull(sna)
+```
+</details>
+### 3. 資料清理（修正或標記異常值）
+讀入示範檔，並將duration的資料類型由字串轉換為時間。
+```{r sample_data, eval=TRUE, echo=TRUE}
+all_data <- readRDS("sample_data.rds")
+#將duration由字串轉換為時間
+all_data <- mutate(all_data, duration = period_to_seconds(hms(duration)))
+```
+
+確認資料是否有缺失或異常值，  
+並採取以下兩種做法：  
+1. 修改回正確值  
+2. 標記並於分析時排除  
+```{r is_excluded, eval=TRUE, echo=TRUE}
+#新增欄位is_excluded,標記異常資料
+all_data <- mutate(all_data, is_excluded = 0)
+```
+##### **確認缺失值並修正**
+```{r is_empty, eval=TRUE, echo=TRUE}
+#檢查各欄位是否有空字串或NULL
+filter(all_data, is.na(start_time))
+filter(all_data, is.na(end_time))
+filter(all_data, is.na(start_station)|start_station=="") #7筆為NA(NULL)
+filter(all_data, is.na(end_station)|end_station=="") #28筆為NA(NULL)
+filter(all_data, is.na(duration)) 
+filter(all_data, is.na(ride_date))
+```
+- 針對無「借車站點」「還車站點」之資料，由於原檔僅35筆，佔整體比例極少，因此將其排除於分析。
+```{r mark empty, eval=TRUE, echo=TRUE}
+#標記start_station為NULL的資料
+all_data <- mutate(all_data, is_excluded=ifelse(start_station==""|is.na(start_station), 1, is_excluded))
+
+#標記end_station為NULL的資料
+all_data <- mutate(all_data, is_excluded=ifelse(end_station==""|is.na(end_station), 1, is_excluded))
+```
+##### **確認異常值並修正**
+- 檢查站點個數是否異常。
+台北市站點個數為1622站，新北市為1461站。
+因此start_station合理值在1622站以下，end_station應約為3083站或以下。
+```{r check station,eval=TRUE, echo=TRUE}
+#檢查站點個數是否合理
+length(unique(all_data$start_station)) #結果: 1527個 
+length(unique(all_data$end_station)) #結果: 2855個
+```
+- 借用日期是否有異常值。
+```{r check ride_date ,eval=TRUE, echo=TRUE}
+#是否有非7月到12月的資料
+filter(all_data, !month(ride_date) %in% 7:12)
+```
+- 借用時長是否異常。
+由於借用Youbike的主要客群為短距離移動，因此將借用時長的合理值設為1分鐘至6小時。
+將借用小於1分鐘或大於6小時資料(佔整體資料0.001)排除於分析。
+```{r mark outliers, eval=TRUE, echo=TRUE}
+#將騎乘時間大於6小時之資料排除於分析
+all_data <- all_data %>% mutate(is_excluded = if_else(duration>21600|duration<60, 1, is_excluded))
+```
+- 建立正確站點名單與資料比對
+租借資料中需要確認站點名稱的欄位有：  
+1. start_staion  
+2. end_station  
+其中，start_station只會是位於台北市的站點，而end_station會包括新北市、桃園市等其他縣市的站點，因此分開處理。  
+  
+針對start_station：  
+建立包含台北市及新北市所有站點名稱的向量，用以比對站點名稱。
+```{r correct station_name, eval=TRUE, echo=TRUE}
+#讀入station_data
+station_data <- readRDS("station_data.rds")
+#建立correct_names清單
+correct_names <- station_data %>%
+  distinct(station_name) %>%
+  pull(station_name)
+```
+找出其start_staion不在station_data裡的紀錄。
+```{r not_in_station_data, eval=TRUE, echo=TRUE}
+#交叉比對, 把在all_data裡卻不在station_data裡的資料拉出來修正(start_station)
+not_in_station_data <- anti_join(all_data, station_data, by = c("start_station" = "station_name"))
+not_in_station_data_distinct <- not_in_station_data %>%
+  filter(is_excluded==0) %>% 
+  distinct(start_station) %>% pull(start_station)
+not_in_station_data_distinct
+```
+對比正確站點紀錄及異常名稱，找出最接近站名。  
+人工決定該修正或排除。  
+若需修正則人工確認正確站名後，寫入正確站名。  
+下方是站名有誤而進行修正的例子。  
+```{r check station_name, eval=TRUE, echo=TRUE}
+#比對出類似名稱找出最接近站名，並修正
+#修正not_in_station_data_distinct[1]
+string_diffs <- stringdist(not_in_station_data_distinct[1], correct_names, method="lv")
+similar_names <- data.frame(name=correct_names, string_diff=string_diffs) %>% 
+  filter(string_diff <=3) %>% arrange(string_diff)
+#需修改站名
+not_in_station_data_distinct[1]
+#修改後站名(人工確認similar_names，選擇最接近的站名)
+correct_name <- "瑠公公園"
+#修正站名
+wrong_name <- not_in_station_data_distinct[1]
+#修正前
+filter(all_data, start_station==wrong_name)
+filter(all_data, end_station==wrong_name)
+target_rows_start <- which(all_data$start_station == wrong_name)
+target_rows_end <- which(all_data$end_station == wrong_name) #若end_station裡也有同樣錯誤的站名，則一同修正。
+all_data$start_station[target_rows_start] <- correct_name
+all_data$end_station[target_rows_end] <- correct_name
+#確認修正成功
+filter(all_data, start_station==wrong_name)
+filter(all_data, end_station==wrong_name)
+```
+若需排除，則將其標記。。
+```{r mark, eval=FALSE, echo=TRUE}
+#修正not_in_station_data_distinct[28]
+#蘆洲維修中心不算站點
+not_in_station_data_distinct[28]
+all_data <- mutate(all_data, is_excluded=if_else(!is.na(start_station) & start_station=="蘆洲維修中心", 1 ,is_excluded))
+all_data <- mutate(all_data, is_excluded=if_else(!is.na(end_station) & end_station=="蘆洲維修中心", 1 ,is_excluded))
+```
+
+確認start_station裡的站點名稱已修正。
+```{r not_in_staion_data3, eval=TRUE, echo=TRUE}
+not_in_station_data <- anti_join(all_data, station_data, by = c("end_station" = "station_name"))
+not_in_station_data_distinct <- not_in_station_data %>%
+  filter(is_excluded==0) %>% 
+  distinct(end_station) %>% pull(end_station)
+#確認not_in_station_data_distinct為空
+not_in_station_data_distinct
+```
+
+針對end_station裡的異常站名：
+首先，將位於桃園的站點排除。
+```{r mark station in taoyuan,eval=TRUE, echo=TRUE}
+all_data <- readRDS("all_data_cleaned_startstation.rds")
+station_data_taoyuan <- readRDS("station_data_taoyuan.rds")
+station_data_taoyuan <- station_data_taoyuan %>% select(sna) %>% pull(sna)
+#將含有桃園站點資料排除
+all_data <- all_data %>% 
+  mutate(is_excluded=if_else(end_station %in% station_data_taoyuan, 1, is_excluded))
+```
+同樣地，建立須修正清單。
+```{r not_in_staion_data2, eval=TRUE, echo=TRUE}
+##交叉比對, 把沒有在station_data裡的資料拉出來修正(end_station)
+not_in_station_data <- anti_join(all_data, station_data, by = c("end_station" = "station_name"))
+not_in_station_data_distinct <- not_in_station_data %>%
+  filter(is_excluded==0) %>% 
+  distinct(end_station) %>% pull(end_station)
+not_in_station_data_distinct
+```
+針對end_station, 原檔因其修正清單大部分為其他縣市之站點，少部分為錯字，因此事先建立對應正確站名清單。  
+直接根據對應正確站名清單進行修改。
+示範檔這邊採取相同做法修改。
+```{r correct end_staiton, eval=TRUE, echo=TRUE}
+#對應正確站名清單
+corrections <- data.frame(
+  # before:錯誤名稱, after:正確的名稱，或 1 表示排除，空值表示跳過
+  before = not_in_station_data_distinct,
+  after = c("華江一華江五路口(雙江翠社區)", "啟文央北二路口(中央公園社區)", "環河西新月一街口(新月天地社區)",
+            "環河西華江六路口(翠亨村社區)", "1", "中正路145巷口", "渡船頭平面停車場", "瓦磘溝(福真里)",
+            "1", "瓦磘截流站", "十四張央北二路口(波爾多社區)", "華江二華江一路口(帝國花園廣場社區)",
+            "新北市藝文中心(文化路二段124巷)", "1", "華江一華江二路口(江匯Life社區)", "金城峯廷街口", "十四張啓文路口", "新北市政府板橋分局沙崙派出所", "1", "捷運海山站(3號出口)轉乘停車場", "1",
+            "浮洲合宜住宅(合安一合宜路口)", "華江五華江一路口(帝國花園廣場社區)", "汐止國民運動中心游泳池(忠孝東路)", "後埔國小(實踐路/重慶路155巷口)",
+            "1", "1", "永翠藝文街口(柏克萊公園社區)", "中央慶利街口(風華綠中央社區)", "1", "1", "1",
+            "1", "1", "新春街125巷(樂活绽社區)", "輕軌濱海義山站(西南側)", "1", "1", "1", "1")    
+)        
+#修正站名
+for (i in seq_len(nrow(corrections))) {
+  wrong <- corrections$before[i]
+  fix <- corrections$after[i]
+  
+  target_rows <- which(all_data$end_station == wrong)
+  
+  if (length(target_rows) > 0) {
+    if (fix == "1") {  # 要排除的情況
+      all_data$is_excluded[target_rows] <- 1
+      #cat("已排除", length(target_rows), "筆資料：", wrong, "\n")
+    } else if (nchar(fix) > 0) {  # 要修正名稱
+      all_data$end_station[target_rows] <- fix
+      #cat("已修正", length(target_rows), "筆資料：", wrong, "→", fix, "\n")
+    } else {  # fix 為空的情況
+      #cat("跳過：", wrong, "\n")
+    }
+  } else {
+    #cat("找不到資料：", wrong, "\n")
+  }
+}
+```
+確認end_station裡的站點名稱已修正。
+```{r not_in_staion_data4, eval=TRUE, echo=TRUE}
+not_in_station_data <- anti_join(all_data, station_data, by = c("end_station" = "station_name"))
+not_in_station_data_distinct <- not_in_station_data %>%
+  filter(is_excluded==0) %>% 
+  distinct(end_station) %>% pull(end_station)
+#確認not_in_station_data_distinct為空
+not_in_station_data_distinct
+```
+部分站點（如福壽公園、後港公園等）在臺北與新北均有同名站點，且原始資料無法進一步辨識其所屬縣市，為避免地區分析誤判，故排除此類站點之資料（共 75,229 筆，占總資料約 0.79%）。
+```{r samename, eval=TRUE, echo=TRUE}
+#排除同名站點
+excluded_station <- station_data %>% count(station_name) %>% filter(n > 1) %>% pull(station_name)
+all_data <- all_data %>% 
+  mutate(is_excluded = if_else(start_station %in% excluded_station | end_station %in% excluded_station, 1, is_excluded))
+```
+### 4. 資料分析
+排除先前標記的異常值(is_excluded=1)後，進行分析。
+```{r ,eval=TRUE, echo=TRUE}
+#僅分析is_excluded=0的資料
+all_data <- all_data %>% 
+  filter(is_excluded==0)
+```
+新增欄位，根據借車時間將資料分成兩類。  
+以利之後針對各時間段進行觀察。  
+Weekday：平日，星期一至五。
+Weekend：假日，星期六及日。
+
+平日之租借資料，再依照時間段分成：  
+- CommuteAM：早上通勤時間，6:00至8:59。  
+- DayTime：白天，9:00至15:59。  
+- CommutePM：晚上通勤時間，16:00至18:59。  
+- NightTime：夜間，19:00至5:59。  
+  
+假日之租借資料，依照時間段分成：  
+- Morning：早上，6:00至12:59。  
+- Afternoo：下午，13:00至18:59。  
+- Night：夜間，19:00至5:59。  
+
+`weekday_type`：weekday
+```{r weekdays_timeperiod, eval=TRUE, echo=TRUE}
+#新增平假日
+all_data <- all_data %>% 
+  mutate(
+    weekday_type = case_when(
+      is.na(start_time) ~ NA,
+      wday(start_time, week_start =1) %in% 1:5 ~ "Weekday",
+      wday(start_time, week_start =1) %in% 6:7 ~ "Weekend",
+      TRUE ~ "error")
+  )
+#新增時段
+all_data <- all_data %>% 
+  mutate(
+    time_period = case_when(
+      is.na(start_time) ~ NA, 
+      weekday_type=="Weekday" ~ case_when(
+        hour(start_time) %in% 6:8 ~ "CommuteAM",
+        hour(start_time) %in% 9:15 ~ "DayTime", 
+        hour(start_time) %in% 16:18 ~ "CommutePM",
+        (hour(start_time) %in% 19:23)|(hour(start_time) %in% 0:5) ~ "NightTime",
+        TRUE ~ "weekday_error"),
+      weekday_type=="Weekend" ~
+        case_when(hour(start_time) %in% 6:12 ~ "Morning",
+                  hour(start_time) %in% 13:18 ~ "Afternoon",
+                  (hour(start_time) %in% 19:23)|(hour(start_time) %in% 0:5) ~ "Night",
+                  TRUE ~ "weekend_error"),
+      TRUE ~ "error")
+  )
+```
+根據租借紀錄，建立各站點的資料表(demand_gap)。
+欄位分別有站點名稱、行政區、緯度、經度及容量。
+```{r borrow_return, eval=TRUE, echo=TRUE}
+#建立借出表(borrow_df) & 排除非台北市資料 
+all_data_with_str_area <- all_data %>% 
+  left_join(station_data %>% select(station_name, district, capacity), 
+            by = c("start_station" = "station_name"))
+borrow_df  <- all_data_with_str_area %>% 
+  filter(str_detect(district, "台北市"))  %>%
+  group_by(start_station, weekday_type, time_period) %>%
+  summarise(borrow_count = n(), .groups = "drop") %>%
+  rename(station = start_station)
+
+#建立歸還表(return_df) & 排除非台北市資料
+all_data_with_end_area<- all_data %>% 
+  left_join(station_data %>% select(station_name, district, capacity), 
+            by = c("end_station" = "station_name"))
+return_df <- all_data_with_end_area %>% 
+  filter(str_detect(district, "台北市"))  %>%
+  group_by(end_station, weekday_type, time_period) %>% 
+  summarise(return_count=n(), .groups = "drop") %>% 
+  rename(station = end_station)
+
+#合併borrow_df和return_df & 加入站點區域、經緯度及容量資料
+demand_gap <- full_join(borrow_df, return_df, by=c("station", "weekday_type", "time_period")) %>% 
+  replace_na(list(borrow_count = 0, return_count = 0)) %>% 
+  left_join(station_data %>% select(station_name, district, latitude, longitude, capacity), 
+            by=c("station" = "station_name"))
+
+#將站點區域中的"台北市"字樣移除
+demand_gap <- demand_gap %>%
+  mutate(district = str_remove(district, "^台北市"))
+```
+計算出每日平均借出及歸還車數。
+計算並新增每日平均借出歸還差值至demand_gap裡。
+```{r couculate, eval=TRUE, echo=TRUE}
+#新增平均每日借出及歸還欄位
+#計算平日天數
+n_weekdays <- all_data %>%
+  filter(weekday_type == "Weekday") %>%
+  summarise(n_weekdays = n_distinct(ride_date)) %>%
+  pull(n_weekdays)
+#計算假日天數
+n_weekends <- all_data %>%
+  filter(weekday_type == "Weekend") %>%
+  summarise(n_weekends = n_distinct(ride_date)) %>%
+  pull(n_weekends)
+#計算每日平均借出及歸還數量
+demand_gap <- demand_gap %>% 
+  mutate(
+    borrow_per_day = case_when(
+      weekday_type=="Weekday" ~ round(borrow_count/n_weekdays, 2),
+      weekday_type=="Weekend" ~ round(borrow_count/n_weekends, 2)
+    ),
+    return_per_day = case_when(
+      weekday_type=="Weekday" ~ round(return_count/n_weekdays, 2),
+      weekday_type=="Weekend" ~ round(return_count/n_weekends, 2)
+    )
+  )
+#計算並新增每日平均借出歸還差值
+demand_gap <- demand_gap %>% 
+  mutate(
+    avg_diff_per_day = round(borrow_per_day-return_per_day, 2)
+  )
+```
+篩選前 100 不平衡站點進行分析。
+```{r top_100, eval=TRUE, echo=TRUE}
+#重新排列順序
+demand_gap <- demand_gap %>%
+  select(station, weekday_type, time_period, avg_diff_per_day, capacity, borrow_count, return_count, borrow_per_day, return_per_day, district, latitude, longitude)
+
+#找出每日平均差值超出容量的前100個站點分析
+top_100_station_name <- demand_gap %>% 
+  group_by(station) %>% 
+  summarise(total_diff_per_day = sum(abs(avg_diff_per_day), na.rm=TRUE)) %>% 
+  arrange(desc(abs(total_diff_per_day))) %>% 
+  slice_head(n=100) %>% 
+  pull(station)
+
+#僅針對前100個站點進行分析
+top_100_station_data <- demand_gap %>% 
+  filter(station %in% top_100_station_name)
+```
+根據差值畫出氣泡圖。
+空心圓代表需補車。實心圓代表需取車。
+從圖中所示，平日早上通勤時間段與晚上通勤時間段的自行車，大致互補。
+假日的早上與晚上時段，大致互補。
+```{r graph, eval=TURE, echo=TRUE}
+#根據時間段畫出氣泡圖
+#將time_period轉為因子並設定順序
+top_100_station_data <- top_100_station_data %>%
+  mutate(time_period = factor(time_period, levels = c(
+    "CommuteAM", "DayTime", "CommutePM", "NightTime",  # 平日
+    "Morning", "Afternoon", "Night"                    # 假日
+  )))
+invisible(
+  ggplot(top_100_station_data, aes(x = longitude, y = latitude)) +
+    geom_point(aes(
+      size = abs(avg_diff_per_day),        # 氣泡大小：差值絕對值
+      color = district,                    # 氣泡顏色：行政區
+      shape = avg_diff_per_day > 0         # 形狀：借出>歸還(TRUE) / 借出<歸還(FALSE)
+    ), alpha = 0.7) +
+    facet_wrap(~ time_period, nrow = 2) +
+    scale_size_continuous(range = c(1, 8)) +
+    scale_color_viridis_d(option = "turbo", name = "行政區")+
+    scale_shape_manual(
+      values = c(`TRUE` = 1, `FALSE` = 16),    #  借出>歸還(TRUE)：空心圓，借出<歸還(FALSE)：實心圓
+      breaks = c(FALSE, TRUE),
+      labels = c(`TRUE` = "需補充", `FALSE` = "需運走"),
+      name = "差值方向"
+    ) +
+    labs(
+      title = "各時段YouBike站點供需不平衡地圖",
+      size = "日均差值（絕對值）",
+      x = "經度", y = "緯度"
+    ) +
+  theme_minimal()
+)
+ggsave("時間段氣泡圖.png", width = 14, height = 8, dpi = 300, bg="white")
+include_graphics("時間段氣泡圖.png")
+```
+接下來將站點根據每日平均差值分成兩類：
+short_term_imbalanced_stations：  
+短時間不平衡，但整日差值小於10之站點。  
+可能為通勤主要站點，僅需要在通勤時間後進行數量調整，不至於無車可借或無空位可還即可。  
+daily_imbalanced_stations：  
+整日不平衡站點。  
+整日差值在10台以上之站點，為借出量或歸還量較大之站點。  
+須制定調度計畫，以確保不會長時間無車或無空位。  
+```{r 2set, eval=FALSE, echo=TRUE}
+#將站點分為短時間不平衡及整體不平衡
+total_diff_data <- demand_gap %>% 
+  filter(station %in% top_100_station_name, ) %>% 
+  group_by(station) %>% 
+  summarise(total_diff_per_day = sum(avg_diff_per_day, na.rm=TRUE)) 
+
+#短時間不平衡名單(整日差值小於10)
+short_term_imbalanced_stations <- total_diff_data %>% 
+  filter(abs(total_diff_per_day)<10) %>% 
+  pull(station)
+#整體不平衡名單(整日差值大於10)
+daily_imbalanced_stations <- total_diff_data %>% 
+  filter(!station %in% short_term_imbalanced_stations) %>% 
+  pull(station)
+```
+短時間不平衡名單數量
+整體不平衡名單數量
+
+站點借出與還車量分佈
+
+時間區段供需差異
+
+供需不平衡站點統計與篩選
+
+調度建議與視覺化
+
+5. 調度策略初步建議(18-19)
+熱點站點與瓶頸區域分析
+
+調度配對原則與規劃方向
+
+可能的調度路線與頻率
+
+6. 結論與後續發展(19-21)
+本次分析成果摘要
+
+未來可納入的資料或進階分析方向
+
+對YouBike營運優化的建議
+
+7. 附錄（程式碼與資料摘要）
+重要程式碼片段（可選）
+
+資料摘要表與圖表
+
+要讓某些程式碼秀出結果?
+主要表格
+欄位要標記嗎``
+
+```{r cars}
+summary(cars)
+```
+
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
