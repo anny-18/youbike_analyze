@@ -113,24 +113,11 @@ demand_gap <- demand_gap %>%
 demand_gap <- demand_gap %>% 
   mutate(
     avg_diff_per_day = round(borrow_per_day-return_per_day, 2), 
-    avg_imbalance_pct = round(avg_diff_per_day/(borrow_per_day+return_per_day), 2)
   )
-
-# demand_gap <- demand_gap %>% 
-#   mutate(
-#     #正數: 需補充, 負數: 需還車
-#     imbalance_number = 
-#       case_when(
-#         avg_diff_per_day>0 ~ avg_diff_per_day, #還需補車數量
-#         avg_diff_per_day<0 & avg_diff_per_day+(capacity-3)>=0 ~ 0, #確保有3台空位以上, 無須調整車數
-#         avg_diff_per_day<0 & avg_diff_per_day+(capacity-3)<0 ~ avg_diff_per_day+capacity, #多出avg_diff_per_day+capacity台, 需取車
-#         avg_diff_per_day==0 ~ 0
-#       )
-#   )
 
 #重新排列順序
 demand_gap <- demand_gap %>%
-  select(station, weekday_type, time_period, avg_diff_per_day, capacity, borrow_count, return_count, borrow_per_day, return_per_day, avg_imbalance_pct, district, latitude, longitude)
+  select(station, weekday_type, time_period, avg_diff_per_day, capacity, borrow_count, return_count, borrow_per_day, return_per_day, district, latitude, longitude)
 
 #找出每日平均差值超出容量的前100個站點分析
 top_100_station_name <- demand_gap %>% 
@@ -218,17 +205,17 @@ availability_watchlist_weekday_evening <- demand_gap %>%
   select(station, district, recommend_action) %>% 
   arrange(district, recommend_action, station)
 
-#短時間不平衡：假日_中午調度名單
+#短時間不平衡：假日_午間調度名單
 availability_watchlist_weekend_noon <- demand_gap %>% 
   filter(station %in% short_term_imbalanced_stations, time_period %in% c("Night", "Morning")) %>%
   group_by(station, district) %>% 
-  summarise(tottal_diff=sum(avg_diff_per_day, na.rm=TRUE),
+  summarise(total_diff=sum(avg_diff_per_day, na.rm=TRUE),
             .groups="drop") %>% 
-  filter(abs(tottal_diff)>10) %>% 
+  filter(abs(total_diff)>10) %>% 
   mutate(recommend_action = 
            case_when(
-             tottal_diff>0 ~ "補充",
-             tottal_diff<0 ~ "取車"
+             total_diff>0 ~ "補充",
+             total_diff<0 ~ "取車"
            )) %>% 
   select(station, district, recommend_action) %>% 
   arrange(district, recommend_action, station)
@@ -262,7 +249,7 @@ dispatch_plan_weekday_morning <- demand_gap %>%
   select(station, district, recommend_action, dispatch_number, min_bike_required, latitude, longitude) %>% 
   arrange(district, recommend_action, station)
   
-#整日不平衡：平日_晚上通勤時段後調度名單
+#整日不平衡：平日_晚間通勤時段後調度名單
 dispatch_plan_weekday_evening <- demand_gap %>% 
   filter(station %in% daily_imbalanced_stations, time_period %in% c("Daytime", "CommutePM")) %>%
   group_by(station, district) %>% 
@@ -280,7 +267,7 @@ dispatch_plan_weekday_evening <- demand_gap %>%
   select(station, district, recommend_action, dispatch_number, min_bike_required, latitude, longitude) %>% 
   arrange(district, recommend_action, station)
 
-#整日不平衡：假日_中午通勤時段後調度名單
+#整日不平衡：假日_午間調度名單
 dispatch_plan_weekend_noon <- demand_gap %>% 
   filter(station %in% daily_imbalanced_stations, time_period %in% c("Night", "Morning")) %>%
   group_by(station, district) %>% 
@@ -298,15 +285,15 @@ dispatch_plan_weekend_noon <- demand_gap %>%
   select(station, district, recommend_action, dispatch_number, min_bike_required, latitude, longitude) %>% 
   arrange(district, recommend_action, station)
 
-#整日不平衡：假日_晚間通勤時段後調度名單
+#整日不平衡：假日_晚間調度名單
 dispatch_plan_weekend_night <- demand_gap %>% 
   filter(station %in% daily_imbalanced_stations, time_period =="Afternoon") %>%
   mutate(
     dispatch_number=ceiling(avg_diff_per_day),
     recommend_action=(
       case_when(
-        avg_imbalance_pct >0 ~ "補充",
-        avg_imbalance_pct <0 ~ "取車"
+        avg_diff_per_day >0 ~ "補充",
+        avg_diff_per_day <0 ~ "取車"
       )
     ),
     min_bike_required = ceiling(capacity*1/3)
@@ -324,7 +311,7 @@ stations_need_bike <- dispatch_plan_weekday_morning %>%
 #需取車站點
 stations_with_extra <- dispatch_plan_weekday_morning %>% 
   filter(dispatch_number < 0) %>% 
-  select(station, longitude, latitude, dispatch_number, district) %>% 
+  select(station, longitude, latitude, dispatch_number, district, min_bike_required) %>% 
   rename(extra=dispatch_number)
 
 
@@ -374,59 +361,52 @@ for (i in 1:nrow(stations_need_bike)) {
       latitude_extra = closest_extra$latitude,
       extra = closest_extra$extra,
       district_extra = closest_extra$district,
-      distance = closest_extra$distance
+      distance = closest_extra$distance,
+      min_bike_of_providing_staitoin = closest_extra$min_bike_required
     )
   )
 }
 
 # 整理結果表
 dispatch_plan_weekday_morning_match_list <- routes_one_to_one %>% 
-  select(station_need, need, longitude_need, latitude_need, station_extra, extra, longitude_extra, latitude_extra, district_extra, distance) %>% 
+  select(station_need, need, longitude_need, latitude_need, station_extra, extra, longitude_extra, latitude_extra, district_extra, distance, min_bike_of_providing_staitoin) %>% 
   arrange(district_extra, extra)
 
 #整天不平衡:平日_晚間調度配對
-#需補車站點
 stations_need_bike <- dispatch_plan_weekday_evening %>% 
   filter(dispatch_number > 0) %>% 
   select(station, longitude, latitude, dispatch_number, district) %>% 
   rename(need=dispatch_number)
-#需取車站點
 stations_with_extra <- dispatch_plan_weekday_evening %>% 
   filter(dispatch_number < 0) %>% 
-  select(station, longitude, latitude, dispatch_number, district) %>% 
+  select(station, longitude, latitude, dispatch_number, district, min_bike_required) %>% 
   rename(extra=dispatch_number)
 
-# 初始化
 routes_one_to_one <- data.frame()
 used_extras <- c()
 
-# 依序處理每個補車站
 for (i in 1:nrow(stations_need_bike)) {
   need_row <- stations_need_bike[i, ]
-  
-  # 找出尚未被配對的取車站
+
   available_extras <- stations_with_extra %>% 
     filter(!station %in% used_extras)
   
-  if (nrow(available_extras) == 0) break  # 如果沒有取車站可配對，結束
+  if (nrow(available_extras) == 0) break 
   
-  # 計算該補車站與所有尚未配對取車站的距離
   distances <- distHaversine(
     matrix(c(need_row$longitude, need_row$latitude), ncol = 2),
     matrix(c(available_extras$longitude, available_extras$latitude), ncol = 2)
   )
-  # 加入距離欄位，並篩選距離小於指定值的站點
+  
   available_extras <- available_extras %>%
     mutate(distance = distances) %>%
     filter(distance <= max_distance)
   
-  if (nrow(available_extras) == 0) next  # 若都太遠則跳過
+  if (nrow(available_extras) == 0) next
   
-  # 選擇距離最近的一個取車站
   closest_extra <- available_extras %>% slice_min(order_by = distance, n = 1)
   used_extras <- c(used_extras, closest_extra$station)  # 記錄已被配對的取車站
   
-  # 建立配對紀錄
   routes_one_to_one <- bind_rows(
     routes_one_to_one,
     data.frame(
@@ -439,59 +419,53 @@ for (i in 1:nrow(stations_need_bike)) {
       latitude_extra = closest_extra$latitude,
       extra = closest_extra$extra,
       district_extra = closest_extra$district,
-      distance = closest_extra$distance
+      distance = closest_extra$distance,
+      min_bike_of_providing_staitoin = closest_extra$min_bike_required
     )
   )
 }
 
 # 整理結果表
 dispatch_plan_weekday_evening_match_list <- routes_one_to_one %>% 
-  select(station_need, need, longitude_need, latitude_need, station_extra, extra, longitude_extra, latitude_extra, district_extra, distance) %>% 
+  select(station_need, need, longitude_need, latitude_need, station_extra, extra, longitude_extra, latitude_extra, district_extra, distance, min_bike_of_providing_staitoin) %>% 
   arrange(district_extra, extra)
 
-#整天不平衡:假日_中午調度配對
-#需補車站點
+#整天不平衡:假日_午間調度配對
+
 stations_need_bike <- dispatch_plan_weekend_noon %>% 
   filter(dispatch_number > 0) %>% 
   select(station, longitude, latitude, dispatch_number, district) %>% 
   rename(need=dispatch_number)
-#需取車站點
 stations_with_extra <- dispatch_plan_weekend_noon %>% 
   filter(dispatch_number < 0) %>% 
-  select(station, longitude, latitude, dispatch_number, district) %>% 
+  select(station, longitude, latitude, dispatch_number, district, min_bike_required) %>% 
   rename(extra=dispatch_number)
 
-# 初始化
 routes_one_to_one <- data.frame()
 used_extras <- c()
 
-# 依序處理每個補車站
 for (i in 1:nrow(stations_need_bike)) {
   need_row <- stations_need_bike[i, ]
   
-  # 找出尚未被配對的取車站
   available_extras <- stations_with_extra %>% 
     filter(!station %in% used_extras)
-  
+
   if (nrow(available_extras) == 0) break  # 如果沒有取車站可配對，結束
-  
-  # 計算該補車站與所有尚未配對取車站的距離
+
   distances <- distHaversine(
     matrix(c(need_row$longitude, need_row$latitude), ncol = 2),
     matrix(c(available_extras$longitude, available_extras$latitude), ncol = 2)
   )
-  # 加入距離欄位，並篩選距離小於指定值的站點
+  
   available_extras <- available_extras %>%
     mutate(distance = distances) %>%
     filter(distance <= max_distance)
   
-  if (nrow(available_extras) == 0) next  # 若都太遠則跳過
+  if (nrow(available_extras) == 0) next 
   
-  # 選擇距離最近的一個取車站
   closest_extra <- available_extras %>% slice_min(order_by = distance, n = 1)
   used_extras <- c(used_extras, closest_extra$station)  # 記錄已被配對的取車站
   
-  # 建立配對紀錄
   routes_one_to_one <- bind_rows(
     routes_one_to_one,
     data.frame(
@@ -504,59 +478,51 @@ for (i in 1:nrow(stations_need_bike)) {
       latitude_extra = closest_extra$latitude,
       extra = closest_extra$extra,
       district_extra = closest_extra$district,
-      distance = closest_extra$distance
+      distance = closest_extra$distance,
+      min_bike_of_providing_staitoin = closest_extra$min_bike_required
     )
   )
 }
 
 # 整理結果表
 dispatch_plan_weekend_noon_match_list <- routes_one_to_one %>% 
-  select(station_need, need, longitude_need, latitude_need, station_extra, extra, longitude_extra, latitude_extra, district_extra, distance) %>% 
+  select(station_need, need, longitude_need, latitude_need, station_extra, extra, longitude_extra, latitude_extra, district_extra, distance, min_bike_of_providing_staitoin) %>% 
   arrange(district_extra, extra)
 
 #整天不平衡:假日_晚間調度配對
-#需補車站點
 stations_need_bike <- dispatch_plan_weekend_night %>% 
   filter(dispatch_number > 0) %>% 
   select(station, longitude, latitude, dispatch_number, district) %>% 
   rename(need=dispatch_number)
-#需取車站點
 stations_with_extra <- dispatch_plan_weekend_night %>% 
   filter(dispatch_number < 0) %>% 
-  select(station, longitude, latitude, dispatch_number, district) %>% 
+  select(station, longitude, latitude, dispatch_number, district, min_bike_required) %>% 
   rename(extra=dispatch_number)
 
-# 初始化
 routes_one_to_one <- data.frame()
 used_extras <- c()
 
-# 依序處理每個補車站
 for (i in 1:nrow(stations_need_bike)) {
   need_row <- stations_need_bike[i, ]
   
-  # 找出尚未被配對的取車站
   available_extras <- stations_with_extra %>% 
     filter(!station %in% used_extras)
   
-  if (nrow(available_extras) == 0) break  # 如果沒有取車站可配對，結束
-  
-  # 計算該補車站與所有尚未配對取車站的距離
+  if (nrow(available_extras) == 0) break
+
   distances <- distHaversine(
     matrix(c(need_row$longitude, need_row$latitude), ncol = 2),
     matrix(c(available_extras$longitude, available_extras$latitude), ncol = 2)
   )
-  # 加入距離欄位，並篩選距離小於指定值的站點
   available_extras <- available_extras %>%
     mutate(distance = distances) %>%
     filter(distance <= max_distance)
   
-  if (nrow(available_extras) == 0) next  # 若都太遠則跳過
+  if (nrow(available_extras) == 0) next 
   
-  # 選擇距離最近的一個取車站
   closest_extra <- available_extras %>% slice_min(order_by = distance, n = 1)
-  used_extras <- c(used_extras, closest_extra$station)  # 記錄已被配對的取車站
+  used_extras <- c(used_extras, closest_extra$station)
   
-  # 建立配對紀錄
   routes_one_to_one <- bind_rows(
     routes_one_to_one,
     data.frame(
@@ -569,14 +535,15 @@ for (i in 1:nrow(stations_need_bike)) {
       latitude_extra = closest_extra$latitude,
       extra = closest_extra$extra,
       district_extra = closest_extra$district,
-      distance = closest_extra$distance
+      distance = closest_extra$distance,
+      min_bike_of_providing_staitoin = closest_extra$min_bike_required
     )
   )
 }
 
 # 整理結果表
 dispatch_plan_weekend_night_match_list <- routes_one_to_one %>% 
-  select(station_need, need, longitude_need, latitude_need, station_extra, extra, longitude_extra, latitude_extra, district_extra, distance) %>% 
+  select(station_need, need, longitude_need, latitude_need, station_extra, extra, longitude_extra, latitude_extra, district_extra, distance, min_bike_of_providing_staitoin) %>% 
   arrange(district_extra, extra)
 
 
@@ -631,11 +598,11 @@ this_time_color <- setNames(color_list[1:length(pair_ids)], pair_ids)
 
 ggplot(dispatch_plan_weekday_morning_for_graph) +
   geom_point(aes(x = longitude, y = latitude, color = factor(pair_id), shape = role), size = 2.5) +
-  geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 3, max.overlaps = 100) +
+  geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 2.5, max.overlaps = 100) +
   scale_color_manual(values = this_time_color) +
   scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16))+
-  labs(title = "YouBike 平日早上調度配對圖",
-       x = "經度", y = "緯度", color = "配對 ID") +
+  theme(legend.position="none")+
+  labs(title = "YouBike 平日早上調度配對圖", x = "經度", y = "緯度", color = "配對 ID") +
   theme_minimal()
 
 ggsave("調度配對圖_平日早上.png", width = 14, height = 8, dpi = 300, bg="white")
@@ -688,7 +655,7 @@ ggplot(dispatch_plan_weekday_evening_for_graph) +
 
 ggsave("調度配對圖_平日晚間.png", width = 14, height = 8, dpi = 300, bg="white")
 
-#整天不平衡:假日中午配對圖
+#整天不平衡:假日午間配對圖
 #建立配對編號
 dispatch_plan_weekend_noon_match_list <- dispatch_plan_weekend_noon_match_list %>% 
   mutate(pair_id = row_number())
@@ -730,11 +697,11 @@ ggplot(dispatch_plan_weekend_noon_for_graph) +
   geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 3, max.overlaps = 100) +
   scale_color_manual(values = this_time_color) +
   scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16))+
-  labs(title = "YouBike 假日中午調度配對圖",
+  labs(title = "YouBike 假日午間調度配對圖",
        x = "經度", y = "緯度", color = "配對 ID") +
   theme_minimal()
 
-ggsave("調度配對圖_假日中午.png", width = 14, height = 8, dpi = 300, bg="white")
+ggsave("調度配對圖_假日午間.png", width = 14, height = 8, dpi = 300, bg="white")
 
 #整天不平衡:假日晚間配對圖
 #建立配對編號
@@ -787,21 +754,30 @@ ggsave("調度配對圖_假日晚間.png", width = 14, height = 8, dpi = 300, bg
 #將結果匯出
 write_csv(availability_watchlist_weekday_morning, "輕度調度清單_平日早上.csv")
 write_csv(availability_watchlist_weekday_evening, "輕度調度清單_平日晚間.csv")
-write_csv(availability_watchlist_weekend_noon, "輕度調度清單_假日中午.csv")
+write_csv(availability_watchlist_weekend_noon, "輕度調度清單_假日午間.csv")
 write_csv(availability_watchlist_weekend_night, "輕度調度清單_假日晚間.csv")
 
 dispatch_plan_weekday_morning_match_list <- dispatch_plan_weekday_morning_match_list %>% 
-  select(station_need, need, station_extra, extra)
+  select(station_need, need, station_extra, extra, min_bike_of_providing_staitoin) %>% 
+  mutate(extra=abs(extra)) %>% 
+  rename(station_requesting_bike = station_need, demand_number = need, station_providing_bike = station_extra, extra_number = extra )
+
 write_csv(dispatch_plan_weekday_morning_match_list, "調度配對清單_平日早上.csv")
 
 dispatch_plan_weekday_evening_match_list <- dispatch_plan_weekday_evening_match_list %>% 
-  select(station_need, need, station_extra, extra)
+  select(station_need, need, station_extra, extra, min_bike_of_providing_staitoin) %>% 
+  mutate(extra=abs(extra)) %>% 
+  rename(station_requesting_bike = station_need, demand_number = need, station_providing_bike = station_extra, extra_number = extra )
 write_csv(dispatch_plan_weekday_evening_match_list, "調度配對清單_平日晚間.csv")
 
 dispatch_plan_weekend_noon_match_list <- dispatch_plan_weekend_noon_match_list %>% 
-  select(station_need, need, station_extra, extra)
-write_csv(dispatch_plan_weekend_noon_match_list, "調度配對清單_假日中午.csv")
+  select(station_need, need, station_extra, extra, min_bike_of_providing_staitoin) %>% 
+  mutate(extra=abs(extra)) %>% 
+  rename(station_requesting_bike = station_need, demand_number = need, station_providing_bike = station_extra, extra_number = extra )
+write_csv(dispatch_plan_weekend_noon_match_list, "調度配對清單_假日午間.csv")
 
 dispatch_plan_weekend_night_match_list <- dispatch_plan_weekend_night_match_list %>% 
-  select(station_need, need, station_extra, extra)
+  select(station_need, need, station_extra, extra, min_bike_of_providing_staitoin) %>% 
+  mutate(extra=abs(extra)) %>% 
+  rename(station_requesting_bike = station_need, demand_number = need, station_providing_bike = station_extra, extra_number= extra )
 write_csv(dispatch_plan_weekend_night_match_list, "調度配對清單_假日晚間.csv")
