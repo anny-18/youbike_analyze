@@ -89,17 +89,16 @@ kable(df, format = "html", caption = "桃園市站點") %>%
 
 #### 
 
-此專題使用3個資料集，分別是:<br>
-- all_data [使用者租借紀錄]<br>
-- station_data：station_data_taipei [台北市站點資料] 及 station_data_newtaipei [新北市站點資料] <br>
-- station_data_taoyuan [桃園市站點資料]<br>
-
+此專題使用3個資料集，分別是:  
+- all_data [使用者租借紀錄]  
+- station_data：station_data_taipei [台北市站點資料] 及 station_data_newtaipei [新北市站點資料]  
+- station_data_taoyuan [桃園市站點資料]  
 
 
 根據官方的格式及取得方式，分別採取以下方式取得：
 <details>
 <summary><strong>
-<span style="font-size:15px;">all_data
+<span style="font-size:15px;">all_data <點此展開>
 </strong></summary>
 <br>
 取得方式：下載自官網之CSV檔, 並整合而成。<br>
@@ -154,7 +153,7 @@ for(f in files[1:6]){
 </details>
 <details>
 <summary><strong>
-<span style="font-size:15px;">station_data
+<span style="font-size:15px;">station_data <點此展開>
 </strong></summary>
 取得方式：<br>
 station_data_taipei：以線上JSON檔取得<br>
@@ -211,7 +210,7 @@ station_data <- station_data %>%
 </details>
 <details>
 <summary><strong>
-<span style="font-size:15px;">station_data_taoyuan
+<span style="font-size:15px;">station_data_taoyuan <點此展開>
 </strong></summary>
 取得方式：自官網下載JSON檔後載入<br>
 <br>
@@ -227,8 +226,8 @@ station_data_taoyuan <- fromJSON("taoyuan_station_json.json")
 station_data_taoyuan <- station_data_taoyuan %>% select(sna) %>% pull(sna)
 ```
 </details>
-### 3. 資料清理（修正或標記異常值）
-讀入示範檔，並將duration的資料類型由字串轉換為時間。
+### 3. 資料清理：修正或標記異常值
+讀入示範資料 sample_data.rds，並將 duration 欄位由字串格式轉換為數值型的秒數（以利後續計算）。
 ```{r sample_data, eval=TRUE, echo=TRUE}
 all_data <- readRDS("sample_data.rds")
 #將duration由字串轉換為時間
@@ -253,7 +252,7 @@ filter(all_data, is.na(end_station)|end_station=="") #28筆為NA(NULL)
 filter(all_data, is.na(duration)) 
 filter(all_data, is.na(ride_date))
 ```
-- 針對無「借車站點」「還車站點」之資料，由於原檔僅35筆，佔整體比例極少，因此將其排除於分析。
+- 對於缺少「借車站點」與「還車站點」的資料，原檔共計 35 筆，占比極小。由於無法推斷原始站點，故將其標記為異常並排除於後續分析中。
 ```{r mark empty, eval=TRUE, echo=TRUE}
 #標記start_station為NULL的資料
 all_data <- mutate(all_data, is_excluded=ifelse(start_station==""|is.na(start_station), 1, is_excluded))
@@ -263,8 +262,10 @@ all_data <- mutate(all_data, is_excluded=ifelse(end_station==""|is.na(end_statio
 ```
 ##### **確認異常值並修正**
 - 檢查站點個數是否異常。
-台北市站點個數為1622站，新北市為1461站。
-因此start_station合理值在1622站以下，end_station應約為3083站或以下。
+台北市共有為1622個站點，新北市為1461個，總數為3083。
+因此：
+- start_station合理站點數應不超過1622站。
+- end_station可包含其他縣市的所有站點，應約3083站或以下。
 ```{r check station,eval=TRUE, echo=TRUE}
 #檢查站點個數是否合理
 length(unique(all_data$start_station)) #結果: 1527個 
@@ -275,21 +276,23 @@ length(unique(all_data$end_station)) #結果: 2855個
 #是否有非7月到12月的資料
 filter(all_data, !month(ride_date) %in% 7:12)
 ```
-- 借用時長是否異常。
-由於借用Youbike的主要客群為短距離移動，因此將借用時長的合理值設為1分鐘至6小時。
-將借用小於1分鐘或大於6小時資料(佔整體資料0.001)排除於分析。
+- 借用時長是否異常。  
+YouBike 的主要使用情境為短程通勤與移動，因此本分析設定合理借用時長為 1 分鐘至 6 小時（60 至 21,600 秒）。  
+超出此範圍者視為異常值，將其標記並排除於後續分析中。  
+此類資料佔整體比例約為 0.001%，比例極低，對分析影響有限。  
 ```{r mark outliers, eval=TRUE, echo=TRUE}
 #將騎乘時間大於6小時之資料排除於分析
 all_data <- all_data %>% mutate(is_excluded = if_else(duration>21600|duration<60, 1, is_excluded))
 ```
-- 建立正確站點名單與資料比對
-租借資料中需要確認站點名稱的欄位有：  
-1. start_staion  
-2. end_station  
-其中，start_station只會是位於台北市的站點，而end_station會包括新北市、桃園市等其他縣市的站點，因此分開處理。  
+- 建立正確站點名單與資料比對  
   
-針對start_station：  
-建立包含台北市及新北市所有站點名稱的向量，用以比對站點名稱。
+租借資料中需要確認站點名稱的欄位有：  
+1. start_staion (僅限台北市站點)  
+2. end_station  (包含台北市、新北市及其他縣市站點)  
+因此兩者分別處理。  
+  
+##### 修正 start_station 中的異常站名： 
+建立包含台北市與新北市所有站點名稱的比對清單 correct_names，用於檢查站點名稱是否正確：   
 ```{r correct station_name, eval=TRUE, echo=TRUE}
 #讀入station_data
 station_data <- readRDS("station_data.rds")
@@ -297,8 +300,12 @@ station_data <- readRDS("station_data.rds")
 correct_names <- station_data %>%
   distinct(station_name) %>%
   pull(station_name)
+
+correct_names %>% 
+  head(10) %>% 
+  kable(caption = "correct_names清單(前十筆)")
 ```
-找出其start_staion不在station_data裡的紀錄。
+接著找出 start_staion 欄位中未出現在 station_data 中的站點名稱。
 ```{r not_in_station_data, eval=TRUE, echo=TRUE}
 #交叉比對, 把在all_data裡卻不在station_data裡的資料拉出來修正(start_station)
 not_in_station_data <- anti_join(all_data, station_data, by = c("start_station" = "station_name"))
@@ -307,10 +314,11 @@ not_in_station_data_distinct <- not_in_station_data %>%
   distinct(start_station) %>% pull(start_station)
 not_in_station_data_distinct
 ```
-對比正確站點紀錄及異常名稱，找出最接近站名。  
-人工決定該修正或排除。  
-若需修正則人工確認正確站名後，寫入正確站名。  
-下方是站名有誤而進行修正的例子。  
+人工修正異常站名
+針對異常站名，使用stringdist()對比相似度找出最接近的站名，  
+並由人工決定是否修正或排除：
+
+若因站名有誤則進行修正：  
 ```{r check station_name, eval=TRUE, echo=TRUE}
 #比對出類似名稱找出最接近站名，並修正
 #修正not_in_station_data_distinct[1]
@@ -319,22 +327,27 @@ similar_names <- data.frame(name=correct_names, string_diff=string_diffs) %>%
   filter(string_diff <=3) %>% arrange(string_diff)
 #需修改站名
 not_in_station_data_distinct[1]
-#修改後站名(人工確認similar_names，選擇最接近的站名)
+#人工確認similar_names，選擇最接近的站名
+similar_names %>% head(10)
+#修改後站名
 correct_name <- "瑠公公園"
 #修正站名
 wrong_name <- not_in_station_data_distinct[1]
 #修正前
-filter(all_data, start_station==wrong_name)
-filter(all_data, end_station==wrong_name)
+#start_station欄位等於此次須修正站名的資料
 target_rows_start <- which(all_data$start_station == wrong_name)
-target_rows_end <- which(all_data$end_station == wrong_name) #若end_station裡也有同樣錯誤的站名，則一同修正。
+filter(all_data, start_station==wrong_name)
+#若end_station裡也有同樣錯誤的站名，則一同修正
+target_rows_end <- which(all_data$end_station == wrong_name)
+filter(all_data, end_station==wrong_name)
+#修正錯誤站名
 all_data$start_station[target_rows_start] <- correct_name
 all_data$end_station[target_rows_end] <- correct_name
 #確認修正成功
 filter(all_data, start_station==wrong_name)
 filter(all_data, end_station==wrong_name)
 ```
-若需排除，則將其標記。。
+若某些名稱（如「蘆洲維修中心」）確定不屬於使用站點，則標記排除。
 ```{r mark, eval=FALSE, echo=TRUE}
 #修正not_in_station_data_distinct[28]
 #蘆洲維修中心不算站點
@@ -343,19 +356,20 @@ all_data <- mutate(all_data, is_excluded=if_else(!is.na(start_station) & start_s
 all_data <- mutate(all_data, is_excluded=if_else(!is.na(end_station) & end_station=="蘆洲維修中心", 1 ,is_excluded))
 ```
 
-確認start_station裡的站點名稱已修正。
+最後確認start_station名稱皆已完全修正。
 ```{r not_in_staion_data3, eval=TRUE, echo=TRUE}
-not_in_station_data <- anti_join(all_data, station_data, by = c("end_station" = "station_name"))
+not_in_station_data <- anti_join(all_data, station_data, by = c("start_station" = "station_name"))
 not_in_station_data_distinct <- not_in_station_data %>%
   filter(is_excluded==0) %>% 
-  distinct(end_station) %>% pull(end_station)
+  distinct(start_station) %>% pull(start_station)
 #確認not_in_station_data_distinct為空
 not_in_station_data_distinct
 ```
-
-針對end_station裡的異常站名：
-首先，將位於桃園的站點排除。
+##### 修正 end_station 中的異常站名：
+end_station 資料中可能包含來自其他縣市的站點名稱，例如桃園。  
+由於本分析聚焦於台北市與新北市，故將桃園站點資料標記排除。  
 ```{r mark station in taoyuan,eval=TRUE, echo=TRUE}
+#匯入start_station欄位已清理的檔案
 all_data <- readRDS("all_data_cleaned_startstation.rds")
 station_data_taoyuan <- readRDS("station_data_taoyuan.rds")
 station_data_taoyuan <- station_data_taoyuan %>% select(sna) %>% pull(sna)
@@ -363,7 +377,7 @@ station_data_taoyuan <- station_data_taoyuan %>% select(sna) %>% pull(sna)
 all_data <- all_data %>% 
   mutate(is_excluded=if_else(end_station %in% station_data_taoyuan, 1, is_excluded))
 ```
-同樣地，建立須修正清單。
+同樣地，建立需修正清單。
 ```{r not_in_staion_data2, eval=TRUE, echo=TRUE}
 ##交叉比對, 把沒有在station_data裡的資料拉出來修正(end_station)
 not_in_station_data <- anti_join(all_data, station_data, by = c("end_station" = "station_name"))
@@ -372,9 +386,13 @@ not_in_station_data_distinct <- not_in_station_data %>%
   distinct(end_station) %>% pull(end_station)
 not_in_station_data_distinct
 ```
-針對end_station, 原檔因其修正清單大部分為其他縣市之站點，少部分為錯字，因此事先建立對應正確站名清單。  
-直接根據對應正確站名清單進行修改。
-示範檔這邊採取相同做法修改。
+需修正清單內大部分站點位於台北市及新北市之外，少部分為錯字，  
+因此人工檢視異常站名後建立對應正確站名清單 corrections。  
+內容如下：  
+- before：錯誤站名。  
+- after：對應修正後的站名，若為 "1" 表示將該資料排除。  
+  
+※ cat() 原為除錯時觀察用，目前已註解停用  
 ```{r correct end_staiton, eval=TRUE, echo=TRUE}
 #對應正確站名清單
 corrections <- data.frame(
@@ -427,31 +445,29 @@ all_data <- all_data %>%
   mutate(is_excluded = if_else(start_station %in% excluded_station | end_station %in% excluded_station, 1, is_excluded))
 ```
 ### 4. 資料分析
-排除先前標記的異常值(is_excluded=1)後，進行分析。
+資料分析部分，將使用排除異常值後的資料（is_excluded = 0）進行分析。
 ```{r ,eval=TRUE, echo=TRUE}
-#僅分析is_excluded=0的資料
+#保留未被標記為異常的資料，作為分析依據
 all_data <- all_data %>% 
   filter(is_excluded==0)
 ```
-新增欄位，根據借車時間將資料分成兩類。  
-以利之後針對各時間段進行觀察。  
-Weekday：平日，星期一至五。
-Weekend：假日，星期六及日。
-
-平日之租借資料，再依照時間段分成：  
-- CommuteAM：早上通勤時間，6:00至8:59。  
-- DayTime：白天，9:00至15:59。  
-- CommutePM：晚上通勤時間，16:00至18:59。  
-- NightTime：夜間，19:00至5:59。  
+為了分析不同時段的使用行為，首先根據借車時間新增兩個欄位：  
+- weekday_type：區分平日與假日（Weekday：星期一至五；Weekend：星期六與日）   
+- time_period：依據不同日類（平日或假日）進一步細分時間段如下：  
   
-假日之租借資料，依照時間段分成：  
-- Morning：早上，6:00至12:59。  
-- Afternoo：下午，13:00至18:59。  
-- Night：夜間，19:00至5:59。  
+平日 ( Weekday )  
+- CommuteAM：早上通勤時間 ( 6:00-8:59 )    
+- DayTime：白天 ( 9:00-15:59 )  
+- CommutePM：晚上通勤時間 ( 16:00-18:59 )    
+- NightTime：夜間 ( 19:00-5:59 )  
+    
+假日 ( Weekend )  
+- Morning：早上 ( 6:00-12:59 )  
+- Afternoo：下午 ( 13:00-18:59 )    
+- Night：夜間 ( 19:00-5:59 )  
 
-`weekday_type`：weekday
 ```{r weekdays_timeperiod, eval=TRUE, echo=TRUE}
-#新增平假日
+#新增平假日欄位
 all_data <- all_data %>% 
   mutate(
     weekday_type = case_when(
@@ -460,7 +476,7 @@ all_data <- all_data %>%
       wday(start_time, week_start =1) %in% 6:7 ~ "Weekend",
       TRUE ~ "error")
   )
-#新增時段
+#新增時間區段欄位
 all_data <- all_data %>% 
   mutate(
     time_period = case_when(
@@ -479,8 +495,10 @@ all_data <- all_data %>%
       TRUE ~ "error")
   )
 ```
-根據租借紀錄，建立各站點的資料表(demand_gap)。
-欄位分別有站點名稱、行政區、緯度、經度及容量。
+根據租借紀錄，分別建立借出表及歸還表，
+並合併為demand_gap資料表，以統整每個站點的借還情況。  
+由於此分析僅分析台北市站點，因此僅保留台北市站點資料，  
+並保留行政區、緯度、經度及容量等欄位。  
 ```{r borrow_return, eval=TRUE, echo=TRUE}
 #建立借出表(borrow_df) & 排除非台北市資料 
 all_data_with_str_area <- all_data %>% 
@@ -512,8 +530,10 @@ demand_gap <- full_join(borrow_df, return_df, by=c("station", "weekday_type", "t
 demand_gap <- demand_gap %>%
   mutate(district = str_remove(district, "^台北市"))
 ```
-計算出每日平均借出及歸還車數。
-計算並新增每日平均借出歸還差值至demand_gap裡。
+根據平日與假日的天數，計算各站點在不同時間段的「每日平均借出數」與「每日平均歸還數」，  
+並新增欄位至 demand_gap 中。  
+
+接著，計算兩者之差（借出 - 歸還），作為「每日平均借還差值」，新增至 avg_diff_per_day 欄位。
 ```{r couculate, eval=TRUE, echo=TRUE}
 #新增平均每日借出及歸還欄位
 #計算平日天數
@@ -544,13 +564,17 @@ demand_gap <- demand_gap %>%
     avg_diff_per_day = round(borrow_per_day-return_per_day, 2)
   )
 ```
-篩選前 100 不平衡站點進行分析。
+由於站點數量眾多，若全數呈現將導致圖表過於雜亂，
+且部分站點的每日借還差值變化小，實際上無需特別調度。
+
+因此，本分析僅聚焦於「特定時間段內借還差值絕對值較大」的站點，
+並依據不平衡程度進行排序，篩選出前 100 名站點作為分析對象，以利後續觀察與制定建議。
 ```{r top_100, eval=TRUE, echo=TRUE}
 #重新排列順序
 demand_gap <- demand_gap %>%
   select(station, weekday_type, time_period, avg_diff_per_day, capacity, borrow_count, return_count, borrow_per_day, return_per_day, district, latitude, longitude)
 
-#找出每日平均差值超出容量的前100個站點分析
+#找出「某一時間段內每日平均差值」最大的前 100 筆站點資料
 top_100_station_name <- demand_gap %>% 
   group_by(station) %>% 
   summarise(total_diff_per_day = sum(abs(avg_diff_per_day), na.rm=TRUE)) %>% 
@@ -562,10 +586,18 @@ top_100_station_name <- demand_gap %>%
 top_100_station_data <- demand_gap %>% 
   filter(station %in% top_100_station_name)
 ```
-根據差值畫出氣泡圖。
-空心圓代表需補車。實心圓代表需取車。
-從圖中所示，平日早上通勤時間段與晚上通勤時間段的自行車，大致互補。
-假日的早上與晚上時段，大致互補。
+
+為更直觀呈現各站點於不同時間段的供需差異，製作氣泡圖：
+
+- 氣泡大小：代表站點每日平均借還差值的絕對值（需求不平衡程度）
+- 圖形樣式：空心圓表示借出量大於歸還量（需補充車輛），實心圓表示歸還量大於借出量（需取走車輛）
+- 顏色：代表不同行政區，以利觀察地區分布差異
+
+從圖中可觀察到：
+**平日的早上（CommuteAM）與傍晚（CommutePM）**供需情形多呈互補，早上車輛大量被借出、傍晚則陸續歸還；
+**假日的早上（Morning）與夜間（Night）**亦呈現類似的互補現象。
+
+這代表部分站點的車輛會隨時間自然流動回原站，不需特別安排大量調度作業，僅需掌握時間差即可達成平衡。
 ```{r graph, eval=TRUE, echo=TRUE}
 #根據時間段畫出氣泡圖
 #將time_period轉為因子並設定順序
@@ -587,8 +619,8 @@ invisible(
     scale_shape_manual(
       values = c(`TRUE` = 1, `FALSE` = 16),    #  借出>歸還(TRUE)：空心圓，借出<歸還(FALSE)：實心圓
       breaks = c(FALSE, TRUE),
-      labels = c(`TRUE` = "需補充", `FALSE` = "需運走"),
-      name = "差值方向"
+      labels = c(`TRUE` = "需補車", `FALSE` = "需取車"),
+      name = "調度方向"
     ) +
     labs(
       title = "各時段YouBike站點供需不平衡地圖",
@@ -598,16 +630,21 @@ invisible(
   theme_minimal()
 )
 ggsave("時間段氣泡圖.png", width = 14, height = 8, dpi = 300, bg="white")
-include_graphics("時間段氣泡圖.png")
 ```
-接下來將站點根據每日平均差值分成兩類：
-short_term_imbalanced_stations：  
-短時間不平衡，但整日差值小於10之站點。  
-可能為通勤主要站點，僅需要在通勤時間後進行數量調整，不至於無車可借或無空位可還即可。  
-daily_imbalanced_stations：  
-整日不平衡站點。  
-整日差值在10台以上之站點，為借出量或歸還量較大之站點。  
-須制定調度計畫，以確保不會長時間無車或無空位。  
+<div style="border: 1px solid black; display: inline-block;">
+  <img src="時間段氣泡圖.png" width="100%">
+</div>
+由於前述圖表中觀察到部分站點在不同時段間具有供需互補現象，表示其不平衡情形僅限於短時間段
+因此，將站點依據「每日平均借還差值」分為兩類：  
+  
+short_term_imbalanced_stations（短時間不平衡站點）：
+整日差值絕對值小於 10，代表整體供需還算平衡。
+雖特定時段（如通勤時間）借還量差異大，但全天流動能夠自然補足。
+僅需針對該時段進行少量調整，無需進行大規模調度。
+  
+daily_imbalanced_stations（整日不平衡站點）：
+整日差值絕對值超過 10，代表整體供需長期不平衡。
+制定較詳細的調度規劃，避免長時間出現無車可借或無位可還的情形。 
 ```{r 2set, eval=TRUE, echo=TRUE}
 #將站點分為短時間不平衡及整體不平衡
 total_diff_data <- demand_gap %>% 
@@ -657,12 +694,12 @@ availability_watchlist_weekday_morning <- demand_gap %>%
   select(station, district, recommend_action) %>% 
   arrange(district, recommend_action, station)
 
-availability_watchlist_weekday_morning
+availability_watchlist_weekday_morning %>% 
+  head(5) %>% 
+  kable(caption = "輕度配對清單（平日早上）前五筆")
 ```
 下面是另外三個其他時段清單。  
 其程式碼邏輯與平日早上相同，僅調整 time_period 條件，故此處不再重複列出。
-
-輕度調度清單_平日晚間
 ```{r short_time_the_other, eval=TRUE, echo=FALSE}
 #短時間不平衡：平日_晚間通勤時間後調度名單。
 availability_watchlist_weekday_evening <- demand_gap %>% 
@@ -679,10 +716,11 @@ availability_watchlist_weekday_evening <- demand_gap %>%
   select(station, district, recommend_action) %>% 
   arrange(district, recommend_action, station)
 
-
-availability_watchlist_weekday_evening
+availability_watchlist_weekday_evening %>% 
+  head(5) %>% 
+  kable(caption = "輕度配對清單（平日晚間）前五筆")
 ```
-輕度調度清單_假日午間
+
 ```{r short_time_the_other2, eval=TRUE, echo=FALSE}
 #短時間不平衡：假日_午間調度名單
 availability_watchlist_weekend_noon <- demand_gap %>% 
@@ -699,9 +737,11 @@ availability_watchlist_weekend_noon <- demand_gap %>%
   select(station, district, recommend_action) %>% 
   arrange(district, recommend_action, station)
 
-availability_watchlist_weekend_noon
+availability_watchlist_weekend_noon%>% 
+  head(5) %>% 
+  kable(caption = "輕度配對清單（假日午間）前五筆")
 ```
-輕度調度清單_假日午間
+
 ```{r short_time_the_other3, eval=TRUE, echo=FALSE}
 #短時間不平衡：假日_夜間調度名單
 availability_watchlist_weekend_night <- demand_gap %>% 
@@ -714,7 +754,9 @@ availability_watchlist_weekend_night <- demand_gap %>%
   select(station, district, recommend_action) %>% 
   arrange(district, recommend_action, station)
 
-availability_watchlist_weekend_night
+availability_watchlist_weekend_night%>% 
+  head(5) %>% 
+  kable(caption = "輕度配對清單（假日晚間）前五筆")
 ```
 #### 整日不平衡站點之調度規劃
 針對整日借還差值超過 10 輛的站點，計畫以「每日平均借還差值」為基準進行調度，  
@@ -746,7 +788,9 @@ dispatch_plan_weekday_morning <- demand_gap %>%
   select(station, district, recommend_action, dispatch_number, min_bike_required, latitude, longitude) %>% 
   arrange(district, recommend_action, station)
 
-dispatch_plan_weekday_morning
+dispatch_plan_weekday_morning %>% 
+  head(5) %>% 
+  kable(caption = "配對清單（平日早上）前五筆")
 ```
 ```{r the_other_dispatch_plan, eval=TRUE, echo=FALSE}
 #整日不平衡：平日_晚間通勤時段後調度名單
@@ -894,7 +938,9 @@ dispatch_plan_weekday_morning_match_list <- routes_one_to_one %>%
   select(station_need, need, longitude_need, latitude_need, station_extra, extra, longitude_extra, latitude_extra, district_extra, distance, min_bike_of_providing_staitoin) %>% 
   arrange(district_extra, extra)
 
-kable(dispatch_plan_weekday_morning_match_list)
+dispatch_plan_weekday_morning_match_list %>% 
+  head(5) %>% 
+  kable(caption = "調度配對清單（平日早上）前五筆")
 ```
 
 ```{r the_other_match_list, eval=TRUE, echo=FALSE}
@@ -1132,28 +1178,25 @@ pair_ids <- unique(dispatch_plan_weekday_morning_for_graph$pair_id)
 
 this_time_color <- setNames(color_list[1:length(pair_ids)], pair_ids)
 
-ggplot(dispatch_plan_weekday_morning_for_graph) +
-  geom_point(aes(x = longitude, y = latitude, color = factor(pair_id), shape = role), size = 2.5) +
-  geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 2.5, max.overlaps = 100) +
-  scale_color_manual(values = this_time_color) +
-  scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16))+
-  theme(legend.position="none")+
-  labs(title = "YouBike 平日早上調度配對圖", x = "經度", y = "緯度", color = "配對 ID") +
-  theme_minimal()
-
-# ggplot(dispatch_plan_weekday_morning_for_graph) +
-#   geom_point(aes(x = longitude, y = latitude, color = factor(pair_id), shape = role), size = 2.5) +
-#   geom_text(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 2.5) +
-#   scale_color_manual(values = this_time_color) +
-#   scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16)) +
-#   theme(legend.position = "none") +
-#   labs(title = "YouBike 平日早上調度配對圖", x = "經度", y = "緯度", color = "配對 ID") +
-#   theme_minimal()
+invisible(
+  ggplot(dispatch_plan_weekday_morning_for_graph) +
+    geom_point(aes(x = longitude, y = latitude, color = factor(pair_id), shape = role), size = 2.5) +
+    geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 2.5, max.overlaps = 100) +
+    scale_color_manual(values = this_time_color, guide = "none") +
+    scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16))+
+    theme(legend.position="none")+
+    labs(title = "YouBike 平日早上調度配對圖", x = "經度", y = "緯度", color = "配對 ID") +
+    theme_minimal()
+)
 
 ggsave("調度配對圖_平日早上.png", width = 14, height = 8, dpi = 300, bg="white")
+
 ```
+<div style="border: 1px solid black; display: inline-block;">
+  <img src="調度配對圖_平日早上.png" width="100%">
+</div>
 下面是其餘三個時間段的配對圖。
-```{r the_other_graph, eval=FALSE, echo=FALSE}
+```{r the_other_graph, eval=TRUE, echo=FALSE}
 #整天不平衡:平日晚間配對圖
 #建立配對編號
 dispatch_plan_weekday_evening_match_list <- dispatch_plan_weekday_evening_match_list %>% 
@@ -1191,16 +1234,18 @@ pair_ids <- unique(dispatch_plan_weekday_evening_for_graph$pair_id)
 
 this_time_color <- setNames(color_list[1:length(pair_ids)], pair_ids)
 
-ggplot(dispatch_plan_weekday_evening_for_graph) +
-  geom_point(aes(x = longitude, y = latitude, color = factor(pair_id), shape = role), size = 2.5) +
-  geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 3, max.overlaps = 100) +
-  scale_color_manual(values = this_time_color) +
-  scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16))+
-  labs(title = "YouBike 平日晚間調度配對圖",
-       x = "經度", y = "緯度", color = "配對 ID") +
-  theme_minimal()
-
+invisible(
+  ggplot(dispatch_plan_weekday_evening_for_graph) +
+    geom_point(aes(x = longitude, y = latitude, color = factor(pair_id), shape = role), size = 2.5) +
+    geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 3, max.overlaps = 100) +
+    scale_color_manual(values = this_time_color, guide = "none") +
+    scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16))+
+    labs(title = "YouBike 平日晚間調度配對圖",
+         x = "經度", y = "緯度", color = "配對 ID") +
+    theme_minimal()
+)
 ggsave("調度配對圖_平日晚間.png", width = 14, height = 8, dpi = 300, bg="white")
+# include_graphics("調度配對圖_平日晚間.png")
 
 #整天不平衡:假日午間配對圖
 #建立配對編號
@@ -1238,17 +1283,19 @@ dispatch_plan_weekend_noon_for_graph <- bind_rows(
 pair_ids <- unique(dispatch_plan_weekend_noon_for_graph$pair_id)
 
 this_time_color <- setNames(color_list[1:length(pair_ids)], pair_ids)
-
-ggplot(dispatch_plan_weekend_noon_for_graph) +
-  geom_point(aes(x = longitude, y = latitude, color = factor(pair_id), shape = role), size = 2.5) +
-  geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 3, max.overlaps = 100) +
-  scale_color_manual(values = this_time_color) +
-  scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16))+
-  labs(title = "YouBike 假日午間調度配對圖",
-       x = "經度", y = "緯度", color = "配對 ID") +
-  theme_minimal()
+invisible(
+  ggplot(dispatch_plan_weekend_noon_for_graph) +
+    geom_point(aes(x = longitude, y = latitude, color = factor(pair_id), shape = role), size = 2.5) +
+    geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 3, max.overlaps = 100) +
+    scale_color_manual(values = this_time_color, guide = "none") +
+    scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16))+
+    labs(title = "YouBike 假日午間調度配對圖",
+         x = "經度", y = "緯度", color = "配對 ID") +
+    theme_minimal()
+)
 
 ggsave("調度配對圖_假日午間.png", width = 14, height = 8, dpi = 300, bg="white")
+# include_graphics("調度配對圖_假日午間.png")
 
 #整天不平衡:假日晚間配對圖
 #建立配對編號
@@ -1287,18 +1334,38 @@ pair_ids <- unique(dispatch_plan_weekend_night_for_graph$pair_id)
 
 this_time_color <- setNames(color_list[1:length(pair_ids)], pair_ids)
 
-ggplot(dispatch_plan_weekend_night_for_graph) +
-  geom_point(aes(x = longitude, y = latitude, color = factor(pair_id), shape = role), size = 2.5) +
-  geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 3, max.overlaps = 100) +
-  scale_color_manual(values = this_time_color) +
-  scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16))+
-  labs(title = "YouBike 假日晚間調度配對圖",
-       x = "經度", y = "緯度", color = "配對 ID") +
-  theme_minimal()
+invisible(
+  ggplot(dispatch_plan_weekend_night_for_graph) +
+    geom_point(aes(x = longitude, y = latitude, color = factor(pair_id), shape = role), size = 2.5) +
+    geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 3, max.overlaps = 100) +
+    scale_color_manual(values = this_time_color, guide = "none") +
+    scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16))+
+    labs(title = "YouBike 假日晚間調度配對圖",
+         x = "經度", y = "緯度", color = "配對 ID") +
+    theme_minimal()
+)
 
 ggsave("調度配對圖_假日晚間.png", width = 14, height = 8, dpi = 300, bg="white")
+# include_graphics("調度配對圖_假日晚間.png")
+
 ```
-最後，將各結果匯出成csv檔。
+<div style="border: 1px solid black; display: inline-block;">
+  <img src="調度配對圖_平日晚間.png" width="100%">
+</div>
+<br>
+<div style="border: 1px solid black; display: inline-block;">
+  <img src="調度配對圖_假日午間.png" width="100%">
+</div>
+<br>
+<div style="border: 1px solid black; display: inline-block;">
+  <img src="調度配對圖_平日晚間.png" width="100%">
+</div>
+
+最後，將分析結果輸出為 CSV 檔案：
+
+輕度調度清單：對於屬於「短時間不平衡」的站點，依據不同時間段（平日早上、晚上，假日午間與夜間）列出需要輕度調整的站點名單。
+
+調度配對清單：針對「整日不平衡」站點，依據供需配對結果建立調度建議，包括需補車與可提供車輛的站點配對與數量建議。
 ```{r ouput_csv, eval=TRUE, echo=TRUE}
 #將結果匯出
 write_csv(availability_watchlist_weekday_morning, "輕度調度清單_平日早上.csv")
@@ -1330,8 +1397,17 @@ dispatch_plan_weekend_night_match_list <- dispatch_plan_weekend_night_match_list
   mutate(extra=abs(extra)) %>% 
   rename(station_requesting_bike = station_need, demand_number = need, station_providing_bike = station_extra, extra_number= extra )
 write_csv(dispatch_plan_weekend_night_match_list, "調度配對清單_假日晚間.csv")
+
+read_csv("輕度調度清單_平日早上.csv") %>%
+  head(5) %>%
+  kable(caption = "輕度調度清單（平日早上）前五筆")
+
+read_csv("調度配對清單_平日早上.csv") %>%
+  head(5) %>%
+  kable(caption = "調度配對清單（平日早上）前五筆")
 ```
-6. 結論與後續發展(19-21)
+6. 結論與後續發展
+
 本次分析成果摘要
 
 未來可納入的資料或進階分析方向
@@ -1346,13 +1422,3 @@ write_csv(dispatch_plan_weekend_night_match_list, "調度配對清單_假日晚�
 要讓某些程式碼秀出結果?
 主要表格
 欄位要標記嗎``
-
-```{r cars}
-summary(cars)
-```
-
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-

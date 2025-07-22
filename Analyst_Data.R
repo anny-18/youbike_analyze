@@ -19,7 +19,7 @@ all_number <- all_data %>% filter(is_excluded==0)  %>% count()
 night_time_number/all_number
 
 #新增平假日及各時段欄位
-#新增平假日
+#新增平假日欄位
 all_data <- all_data %>% 
   mutate(
     weekday_type = case_when(
@@ -28,7 +28,7 @@ all_data <- all_data %>%
       wday(start_time, week_start =1) %in% 6:7 ~ "Weekend",
       TRUE ~ "error")
     )
-#新增時段
+#新增各時段欄位
 all_data <- all_data %>% 
   mutate(
     time_period = case_when(
@@ -119,7 +119,7 @@ demand_gap <- demand_gap %>%
 demand_gap <- demand_gap %>%
   select(station, weekday_type, time_period, avg_diff_per_day, capacity, borrow_count, return_count, borrow_per_day, return_per_day, district, latitude, longitude)
 
-#找出每日平均差值超出容量的前100個站點分析
+#找出「某一時間段內每日平均差值」最大的前 100 筆站點資料
 top_100_station_name <- demand_gap %>% 
   group_by(station) %>% 
   summarise(total_diff_per_day = sum(abs(avg_diff_per_day), na.rm=TRUE)) %>% 
@@ -599,7 +599,7 @@ this_time_color <- setNames(color_list[1:length(pair_ids)], pair_ids)
 ggplot(dispatch_plan_weekday_morning_for_graph) +
   geom_point(aes(x = longitude, y = latitude, color = factor(pair_id), shape = role), size = 2.5) +
   geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 2.5, max.overlaps = 100) +
-  scale_color_manual(values = this_time_color) +
+  scale_color_manual(values = this_time_color, guide = "none") +
   scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16))+
   theme(legend.position="none")+
   labs(title = "YouBike 平日早上調度配對圖", x = "經度", y = "緯度", color = "配對 ID") +
@@ -647,7 +647,7 @@ this_time_color <- setNames(color_list[1:length(pair_ids)], pair_ids)
 ggplot(dispatch_plan_weekday_evening_for_graph) +
   geom_point(aes(x = longitude, y = latitude, color = factor(pair_id), shape = role), size = 2.5) +
   geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 3, max.overlaps = 100) +
-  scale_color_manual(values = this_time_color) +
+  scale_color_manual(values = this_time_color, guide = "none") +
   scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16))+
   labs(title = "YouBike 平日晚間調度配對圖",
        x = "經度", y = "緯度", color = "配對 ID") +
@@ -695,7 +695,7 @@ this_time_color <- setNames(color_list[1:length(pair_ids)], pair_ids)
 ggplot(dispatch_plan_weekend_noon_for_graph) +
   geom_point(aes(x = longitude, y = latitude, color = factor(pair_id), shape = role), size = 2.5) +
   geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 3, max.overlaps = 100) +
-  scale_color_manual(values = this_time_color) +
+  scale_color_manual(values = this_time_color, guide = "none") +
   scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16))+
   labs(title = "YouBike 假日午間調度配對圖",
        x = "經度", y = "緯度", color = "配對 ID") +
@@ -743,7 +743,7 @@ this_time_color <- setNames(color_list[1:length(pair_ids)], pair_ids)
 ggplot(dispatch_plan_weekend_night_for_graph) +
   geom_point(aes(x = longitude, y = latitude, color = factor(pair_id), shape = role), size = 2.5) +
   geom_text_repel(aes(x = longitude, y = latitude, label = station, color = factor(pair_id)), size = 3, max.overlaps = 100) +
-  scale_color_manual(values = this_time_color) +
+  scale_color_manual(values = this_time_color, guide = "none") +
   scale_shape_manual(values = c("need_bike" = 1, "extra_bike" = 16))+
   labs(title = "YouBike 假日晚間調度配對圖",
        x = "經度", y = "緯度", color = "配對 ID") +
