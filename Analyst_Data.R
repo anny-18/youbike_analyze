@@ -27,7 +27,7 @@ all_data <- all_data %>%
       wday(start_time, week_start =1) %in% 1:5 ~ "Weekday",
       wday(start_time, week_start =1) %in% 6:7 ~ "Weekend",
       TRUE ~ "error")
-    )
+  )
 #新增各時段欄位
 all_data <- all_data %>% 
   mutate(
@@ -52,7 +52,7 @@ result <- all_data %>%
   filter(
     weekday_type=="error" | 
       time_period %in% c("weekday_error", "weekend_error", "error")
-    )
+  )
 
 #建立借出及歸還資料表(borrow_df / return_df) & 排除非台北市資料
 # 先合併，把站名對應的區域資料加進all_data
@@ -130,14 +130,15 @@ top_100_station_name <- demand_gap %>%
 top_100_station_data <- demand_gap %>% 
   filter(station %in% top_100_station_name)
 
-top_100_station_data <- top_100_station_data %>%
+#根據時間段畫出氣泡圖
+#篩選出平日的資料，將time_period轉為因子並設定順序
+top_100_station_data_weekdays <- top_100_station_data %>% 
+  filter(weekday_type=="Weekday")
+top_100_station_data_weekdays <- top_100_station_data_weekdays %>%
   mutate(time_period = factor(time_period, levels = c(
-    "CommuteAM", "DayTime", "CommutePM", "NightTime",  # 平日
-    "Morning", "Afternoon", "Night"                    # 假日
+    "CommuteAM", "DayTime", "CommutePM", "NightTime"  #平日時間段
   )))
-
-#氣泡+時間分段
-ggplot(top_100_station_data, aes(x = longitude, y = latitude)) +
+ggplot(top_100_station_data_weekdays, aes(x = longitude, y = latitude)) +
   geom_point(aes(
     size = abs(avg_diff_per_day),        # 氣泡大小：差值絕對值
     color = district,                    # 氣泡顏色：行政區
@@ -153,12 +154,45 @@ ggplot(top_100_station_data, aes(x = longitude, y = latitude)) +
     name = "差值方向"
   ) +
   labs(
-    title = "各時段YouBike站點供需不平衡地圖",
+    title = "平日各時段供需地圖",
     size = "日均差值（絕對值）",
     x = "經度", y = "緯度"
   ) +
   theme_minimal()
-ggsave("氣泡圖.png", width = 14, height = 8, dpi = 300, bg="white")
+
+
+ggsave("平日氣泡圖.png", width = 14, height = 8, dpi = 300, bg="white")
+
+#根據時間段畫出假日氣泡圖
+top_100_station_data_weekends <- top_100_station_data %>% 
+  filter(weekday_type=="Weekend")
+top_100_station_data_weekends <- top_100_station_data_weekends %>%
+  mutate(time_period = factor(time_period, levels = c(
+    "Morning", "Afternoon", "Night" # 假日時間段
+  )))
+ggplot(top_100_station_data_weekends, aes(x = longitude, y = latitude)) +
+  geom_point(aes(
+    size = abs(avg_diff_per_day),       
+    color = district,                    
+    shape = avg_diff_per_day > 0         
+  ), alpha = 0.7) +
+  facet_wrap(~ time_period, nrow = 2) +
+  scale_size_continuous(range = c(1, 8)) +
+  scale_color_viridis_d(option = "turbo", name = "行政區")+
+  scale_shape_manual(
+    values = c(`TRUE` = 1, `FALSE` = 16), 
+    breaks = c(FALSE, TRUE),
+    labels = c(`TRUE` = "需補充", `FALSE` = "需運走"),
+    name = "差值方向"
+  ) +
+  labs(
+    title = "假日各時段供需地圖",
+    size = "日均差值（絕對值）",
+    x = "經度", y = "緯度"
+  ) +
+  theme_minimal()
+
+ggsave("假日氣泡圖.png", width = 14, height = 8, dpi = 300, bg="white")
 
 #將站點分為短時間不平衡及整體不平衡
 total_diff_data <- demand_gap %>% 
@@ -242,13 +276,13 @@ dispatch_plan_weekday_morning <- demand_gap %>%
       case_when(
         total_diff >0 ~ "補充",
         total_diff <0 ~ "取車"
-        )
+      )
     ),
     min_bike_required = ceiling(capacity*1/3)
   ) %>% 
   select(station, district, recommend_action, dispatch_number, min_bike_required, latitude, longitude) %>% 
   arrange(district, recommend_action, station)
-  
+
 #整日不平衡：平日_晚間通勤時段後調度名單
 dispatch_plan_weekday_evening <- demand_gap %>% 
   filter(station %in% daily_imbalanced_stations, time_period %in% c("Daytime", "CommutePM")) %>%
@@ -387,7 +421,7 @@ used_extras <- c()
 
 for (i in 1:nrow(stations_need_bike)) {
   need_row <- stations_need_bike[i, ]
-
+  
   available_extras <- stations_with_extra %>% 
     filter(!station %in% used_extras)
   
@@ -449,9 +483,9 @@ for (i in 1:nrow(stations_need_bike)) {
   
   available_extras <- stations_with_extra %>% 
     filter(!station %in% used_extras)
-
+  
   if (nrow(available_extras) == 0) break  # 如果沒有取車站可配對，結束
-
+  
   distances <- distHaversine(
     matrix(c(need_row$longitude, need_row$latitude), ncol = 2),
     matrix(c(available_extras$longitude, available_extras$latitude), ncol = 2)
@@ -509,7 +543,7 @@ for (i in 1:nrow(stations_need_bike)) {
     filter(!station %in% used_extras)
   
   if (nrow(available_extras) == 0) break
-
+  
   distances <- distHaversine(
     matrix(c(need_row$longitude, need_row$latitude), ncol = 2),
     matrix(c(available_extras$longitude, available_extras$latitude), ncol = 2)
@@ -781,3 +815,4 @@ dispatch_plan_weekend_night_match_list <- dispatch_plan_weekend_night_match_list
   mutate(extra=abs(extra)) %>% 
   rename(station_requesting_bike = station_need, demand_number = need, station_providing_bike = station_extra, extra_number= extra )
 write_csv(dispatch_plan_weekend_night_match_list, "調度配對清單_假日晚間.csv")
+
