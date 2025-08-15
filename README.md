@@ -35,14 +35,6 @@ project_folder/
 ├── dataset/ ← 原始資料
 ├── report/ ← 分析報告
 └── output/ ← 匯出結果
-```
-project_folder/
-├── Conbine_Data.R
-├── Clean_data.R
-├── Analyst_Data.R
-├── dataset/         ← 原始資料
-├── report/          ← 分析報告
-├── output/          ← 匯出結果
 
 ## 使用說明
 1. 下載原始資料並放入 `dataset/` 資料夾  
