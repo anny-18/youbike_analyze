@@ -29,13 +29,14 @@
 ## 專案結構
 ```plaintext
 project_folder/
-├── Conbine_Data.R
-├── Clean_data.R
-├── Analyst_Data.R
-├── dataset/ ← 原始資料
-├── report/ ← 分析報告
-└── output/ ← 匯出結果
+├── Conbine_Data.R # 合併原始資料
+├── Clean_data.R # 清理與前處理資料
+├── Analyst_Data.R # 進行資料分析
+├── dataset/ # 原始資料
+├── report/ # 分析報告
+└── output/ # 匯出結果
 
+```
 ## 使用說明
 1. 下載原始資料並放入 `dataset/` 資料夾  
 2. 執行 `Conbine_Data.R`：合併每月資料  
