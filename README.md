@@ -27,6 +27,15 @@
 - 調度計畫配對與建議
 
 ## 專案結構
+```plaintext
+project_folder/
+├── Conbine_Data.R
+├── Clean_data.R
+├── Analyst_Data.R
+├── dataset/ ← 原始資料
+├── report/ ← 分析報告
+└── output/ ← 匯出結果
+```
 project_folder/
 ├── Conbine_Data.R
 ├── Clean_data.R
